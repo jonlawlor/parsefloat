@@ -277,6 +277,9 @@ func (e *expression) Eval(vars map[string]float64) float64 {
 	}
 	return stack[0]
 }
+
+// New Expression from a string and set of variable names.  Use NamedVars to
+// create the set.
 func New(expr string, varNames map[string]struct{}) (Expression, error) {
 	fset := token.NewFileSet()
 	fexpr, err := parser.ParseExprFrom(fset, "", expr, 0)
