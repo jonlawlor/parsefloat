@@ -59,19 +59,19 @@ func TestParse(t *testing.T) {
 		},
 	} {
 		inre := regexp.MustCompile(tt.inre)
-		names := readNames(inre)
+		names := NamedVars(inre)
 		xExpr, err := parseX(names, tt.xtrans)
 		if err != nil {
 			panic(err)
 		}
 		for xi, expr := range xExpr {
-			if x := expr.value(tt.vars); x != tt.wantX[xi] {
+			if x := expr.Eval(tt.vars); x != tt.wantX[xi] {
 				t.Errorf("%d: expected x[%d] = %f, got %f", i, xi, tt.wantX[xi], x)
 			}
 			if x := expr.String(); x != tt.xstrings[xi] {
 				t.Errorf("%d: expected x[%d].String() = %s, got %s", i, xi, tt.xstrings[xi], x)
 			}
-			for xouti, xout := range expr.output {
+			for xouti, xout := range expr.(*expression).output {
 				if xout.String() != tt.xrpn[xi][xouti] {
 					t.Errorf("%d: expected x[%d].output[%d].String() = %s, got %s", i, xi, xouti, tt.xrpn[xi][xouti], xout.String())
 				}
@@ -82,7 +82,7 @@ func TestParse(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-		if y := yExpr.value(tt.vars); y != tt.wantY {
+		if y := yExpr.Eval(tt.vars); y != tt.wantY {
 			t.Errorf("%d: expected y = %f, got %f", i, tt.wantY, y)
 		}
 	}

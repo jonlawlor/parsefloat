@@ -12,6 +12,7 @@ import (
 	"go/token"
 	"log"
 	"math"
+	"regexp"
 	"strconv"
 )
 
@@ -78,7 +79,16 @@ var binaryFuncs = map[string]func(float64, float64) float64{
 	"Remainder": math.Remainder,
 }
 
-func parseX(varNames map[string]struct{}, expr string) ([]*evaluation, error) {
+// NamedVars returns the set of named variables within a regular expression.
+func NamedVars(re *regexp.Regexp) map[string]struct{} {
+	varNames := make(map[string]struct{})
+	for _, n := range re.SubexpNames() {
+		varNames[n] = struct{}{}
+	}
+	return varNames
+}
+
+func parseX(varNames map[string]struct{}, expr string) ([]Expression, error) {
 	// find the comma delimited explantory transformation
 	fset := token.NewFileSet()
 	expr = "float64{" + expr + "}"
@@ -87,9 +97,9 @@ func parseX(varNames map[string]struct{}, expr string) ([]*evaluation, error) {
 		return nil, err
 	}
 	slexpr := fexpr.(*ast.CompositeLit)
-	var vs []*evaluation
+	var vs []Expression
 	for _, exp := range slexpr.Elts {
-		v, err := newEvaluation(expr[exp.Pos()-1:exp.End()-1], varNames)
+		v, err := New(expr[exp.Pos()-1:exp.End()-1], varNames)
 		if err != nil {
 			return nil, err
 		}
@@ -100,14 +110,15 @@ func parseX(varNames map[string]struct{}, expr string) ([]*evaluation, error) {
 	return vs, nil
 }
 
-func parseY(varNames map[string]struct{}, expr string) (*evaluation, error) {
-	return newEvaluation(expr, varNames)
+func parseY(varNames map[string]struct{}, expr string) (Expression, error) {
+	return New(expr, varNames)
 }
 
-// for representing the transformation functions in RPN
-type operand interface {
+// Expression is an expression containing only float64s and functions of float64s
+// that can be evaluated given a set of variables.
+type Expression interface {
 	String() string
-	value(map[string]float64) float64
+	Eval(map[string]float64) float64
 }
 
 type float64Literal struct {
@@ -118,7 +129,7 @@ type float64Literal struct {
 func (e float64Literal) String() string {
 	return e.s
 }
-func (e float64Literal) value(vars map[string]float64) float64 {
+func (e float64Literal) Eval(vars map[string]float64) float64 {
 	return e.v
 }
 
@@ -127,7 +138,7 @@ type ident string
 func (e ident) String() string {
 	return string(e)
 }
-func (e ident) value(vars map[string]float64) float64 {
+func (e ident) Eval(vars map[string]float64) float64 {
 	return vars[string(e)]
 }
 
@@ -227,28 +238,28 @@ func (e binaryFunc) eval(stack []float64) int {
 	return 1 // number of items to remove from the end
 }
 
-// evaluation takes a limited set of go expressions and turns them into
-// operands and operators in RPN for later evaluation.  parseError contains
+// expression takes a limited set of go expressions and turns them into
+// Expressions and operators in RPN for later expression.  parseError contains
 // errors that can occur during string parsing.
-type evaluation struct {
+type expression struct {
 	s          string
 	output     []fmt.Stringer // RPN
 	knownVars  map[string]struct{}
 	parseError error
 }
 
-func (e *evaluation) String() string {
+func (e *expression) String() string {
 	return e.s
 }
 
-func (e *evaluation) value(vars map[string]float64) float64 {
+func (e *expression) Eval(vars map[string]float64) float64 {
 	var stack []float64
 	if len(e.output) == 0 {
 		log.Fatal("no expressions in " + e.String())
 	}
 	for _, o := range e.output {
-		if val, ok := o.(operand); ok {
-			stack = append(stack, val.value(vars))
+		if val, ok := o.(Expression); ok {
+			stack = append(stack, val.Eval(vars))
 			continue
 		}
 		if op, ok := o.(operator); ok {
@@ -266,13 +277,13 @@ func (e *evaluation) value(vars map[string]float64) float64 {
 	}
 	return stack[0]
 }
-func newEvaluation(expr string, varNames map[string]struct{}) (*evaluation, error) {
+func New(expr string, varNames map[string]struct{}) (Expression, error) {
 	fset := token.NewFileSet()
 	fexpr, err := parser.ParseExprFrom(fset, "", expr, 0)
 	if err != nil {
 		return nil, err
 	}
-	v := &evaluation{s: expr, knownVars: varNames}
+	v := &expression{s: expr, knownVars: varNames}
 
 	// populate the output
 	ast.Walk(v, fexpr)
@@ -280,8 +291,8 @@ func newEvaluation(expr string, varNames map[string]struct{}) (*evaluation, erro
 }
 
 // Visit implements the ast.Visitor interface.  It populates the
-// evaluation output field with identifiers, literals, and functions.
-func (e *evaluation) Visit(node ast.Node) (w ast.Visitor) {
+// expression output field with identifiers, literals, and functions.
+func (e *expression) Visit(node ast.Node) (w ast.Visitor) {
 	if node == nil || e.parseError != nil {
 		// all done
 		return e
