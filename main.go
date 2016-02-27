@@ -2,6 +2,17 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// Package parsefloat converts a string in go expression format into a reverse polish notation
+// representation of its mathematical transformation, as long as it only has
+// float64's, functions of float64 from the math package, and predefined
+// identifiers.
+//
+// Doing this in RPN might be kind of dumb.  There may be a better way of
+// evaluating go expressions.
+//
+// Note that only functions of float64s and float64 literals are allowed, with
+// the expection of << and >>, because while those functions can be applied
+// to float64's, it will panic if the amount to shift is not an integer.
 package parsefloat
 
 import (
@@ -15,18 +26,6 @@ import (
 	"regexp"
 	"strconv"
 )
-
-// Converts a string in go expression format into a reverse polish notation
-// representation of its mathematical transformation, as long as it only has
-// float64's, functions of float64 from the math package, and predefined
-// identifiers.
-//
-// Doing this in RPN might be kind of dumb.  There may be a better way of
-// evaluating go expressions.
-//
-// Note that only functions of float64s and float64 literals are allowed, with
-// the expection of << and >>, because while those functions can be applied
-// to float64's, it will panic if the amount to shift is not an integer.
 
 // unaryFuncs is the set of functions that will be recognized as math.(func) unary functions.
 var unaryFuncs = map[string]func(float64) float64{
@@ -88,15 +87,19 @@ func NamedVars(re *regexp.Regexp) map[string]struct{} {
 	return varNames
 }
 
-func parseX(varNames map[string]struct{}, expr string) ([]Expression, error) {
+// NewSlice parses an expression representing a []float64.  The input expr should
+// begin with "float64{" and end with "}"
+func NewSlice(expr string, varNames map[string]struct{}) ([]Expression, error) {
 	// find the comma delimited explantory transformation
 	fset := token.NewFileSet()
-	expr = "float64{" + expr + "}"
 	fexpr, err := parser.ParseExprFrom(fset, "", expr, 0)
 	if err != nil {
 		return nil, err
 	}
-	slexpr := fexpr.(*ast.CompositeLit)
+	slexpr, ok := fexpr.(*ast.CompositeLit)
+	if !ok {
+		return nil, errors.New("expression " + expr + " is not a []float64")
+	}
 	var vs []Expression
 	for _, exp := range slexpr.Elts {
 		v, err := New(expr[exp.Pos()-1:exp.End()-1], varNames)
@@ -108,10 +111,6 @@ func parseX(varNames map[string]struct{}, expr string) ([]Expression, error) {
 
 	// populate the output
 	return vs, nil
-}
-
-func parseY(varNames map[string]struct{}, expr string) (Expression, error) {
-	return New(expr, varNames)
 }
 
 // Expression is an expression containing only float64s and functions of float64s

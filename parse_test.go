@@ -5,85 +5,182 @@
 package parsefloat
 
 import (
+	"errors"
 	"math"
 	"regexp"
 	"testing"
 )
 
-func TestParse(t *testing.T) {
+func TestNew(t *testing.T) {
 	for i, tt := range []struct {
-		inre           string
-		xtrans, ytrans string
-		xrpn           [][]string
-		xstrings       []string
-		vars           map[string]float64
-		wantX          []float64
-		wantY          float64
+		varre string
+		expr  string
+		rpn   []string
+		str   string
+		vars  map[string]float64
+		want  float64
 	}{
-		{
-			inre:     `(?P<N>\d+)-\d+$`,
-			xtrans:   "math.Log(N), 1.0",
-			xrpn:     [][]string{{"N", "math.Log"}, {"1.0"}},
-			xstrings: []string{"math.Log(N)", "1.0"},
-			ytrans:   "Y",
-			vars:     map[string]float64{"N": 10.0, "Y": 2.0},
-			wantX:    []float64{math.Log(10.0), 1.0},
-			wantY:    2.0,
-		}, {
-			inre:     `(?P<N>\d+)-\d+$`,
-			xtrans:   "1.0 / N",
-			xrpn:     [][]string{{"1.0", "N", "/"}},
-			xstrings: []string{"1.0 / N"},
-			ytrans:   "Y / N",
-			vars:     map[string]float64{"N": 0.0, "Y": 1.0},
-			wantX:    []float64{math.Inf(1)},
-			wantY:    math.Inf(1),
-		}, {
-			inre:     `(?P<N>\d+)-\d+$`,
-			xtrans:   "N*N, N, 1.0",
-			xrpn:     [][]string{{"N", "N", "*"}, {"N"}, {"1.0"}},
-			xstrings: []string{"N*N", "N", "1.0"},
-			ytrans:   "Y+1",
-			vars:     map[string]float64{"N": 10.0, "Y": 2.0},
-			wantX:    []float64{100.0, 10.0, 1.0},
-			wantY:    3.0,
-		}, {
-			inre:     `(?P<M>\d+)(?P<N>\d+)-\d+$`,
-			xtrans:   "-math.Hypot(M+N, M-N), +M/N",
-			xrpn:     [][]string{{"M", "N", "+", "M", "N", "-", "math.Hypot", "u-"}, {"M", "u+", "N", "/"}},
-			xstrings: []string{"-math.Hypot(M+N, M-N)", "+M/N"},
-			ytrans:   "Y+1",
-			vars:     map[string]float64{"M": 3.5, "N": 0.5, "Y": -1.0},
-			wantX:    []float64{-5.0, 7.0},
-			wantY:    0.0,
+		{ // constant
+			varre: `(?P<N>\d+)-\d+$`,
+			expr:  "1.0",
+			rpn:   []string{"1.0"},
+			str:   "1.0",
+			vars:  nil,
+			want:  1.0,
+		},
+		{ // variable
+			varre: `(?P<N>\d+)-\d+$`,
+			expr:  "N",
+			rpn:   []string{"N"},
+			str:   "N",
+			vars:  map[string]float64{"N": 10.0},
+			want:  10.0,
+		},
+		{ // multiplication
+			varre: `(?P<N>\d+)-\d+$`,
+			expr:  "N*N",
+			rpn:   []string{"N", "N", "*"},
+			str:   "N*N",
+			vars:  map[string]float64{"N": 10.0},
+			want:  100.0,
+		},
+		{ // unary function of N
+			varre: `(?P<N>\d+)-\d+$`,
+			expr:  "math.Log(N)",
+			rpn:   []string{"N", "math.Log"},
+			str:   "math.Log(N)",
+			vars:  map[string]float64{"N": 10.0},
+			want:  math.Log(10.0),
+		},
+		{ // binary function of two different inputs
+			varre: `(?P<M>\d+)(?P<N>\d+)-\d+$`,
+			expr:  "-math.Hypot(M+N, M-N)",
+			rpn:   []string{"M", "N", "+", "M", "N", "-", "math.Hypot", "u-"},
+			str:   "-math.Hypot(M+N, M-N)",
+			vars:  map[string]float64{"M": 3.5, "N": 0.5},
+			want:  -5.0,
+		},
+		{ // unary plus and division
+			varre: `(?P<M>\d+)(?P<N>\d+)-\d+$`,
+			expr:  "+M/N",
+			rpn:   []string{"M", "u+", "N", "/"},
+			str:   "+M/N",
+			vars:  map[string]float64{"M": 3.5, "N": 0.5},
+			want:  7.0,
 		},
 	} {
-		inre := regexp.MustCompile(tt.inre)
-		names := NamedVars(inre)
-		xExpr, err := parseX(names, tt.xtrans)
+		re := regexp.MustCompile(tt.varre)
+		names := NamedVars(re)
+		expr, err := New(tt.expr, names)
 		if err != nil {
 			panic(err)
 		}
-		for xi, expr := range xExpr {
-			if x := expr.Eval(tt.vars); x != tt.wantX[xi] {
-				t.Errorf("%d: expected x[%d] = %f, got %f", i, xi, tt.wantX[xi], x)
-			}
-			if x := expr.String(); x != tt.xstrings[xi] {
-				t.Errorf("%d: expected x[%d].String() = %s, got %s", i, xi, tt.xstrings[xi], x)
-			}
-			for xouti, xout := range expr.(*expression).output {
-				if xout.String() != tt.xrpn[xi][xouti] {
-					t.Errorf("%d: expected x[%d].output[%d].String() = %s, got %s", i, xi, xouti, tt.xrpn[xi][xouti], xout.String())
-				}
+		if x := expr.Eval(tt.vars); x != tt.want {
+			t.Errorf("%d: expected %s = %f, got %f", i, expr, tt.want, x)
+		}
+		if x := expr.String(); x != tt.str {
+			t.Errorf("%d: expected %g.String() = %s, got %s", i, expr, tt.str, x)
+		}
+		for xouti, xout := range expr.(*expression).output {
+			if xout.String() != tt.rpn[xouti] {
+				t.Errorf("%d: expected (%s).output[%d].String() = %s, got %s", i, expr, xouti, tt.rpn[xouti], xout.String())
 			}
 		}
-		names["Y"] = struct{}{}
-		yExpr, err := parseY(names, tt.ytrans)
+	}
+}
+
+func TestNewSlice(t *testing.T) {
+	for i, tt := range []struct {
+		varre string
+		expr  string
+		vars  map[string]float64
+		want  []float64
+	}{
+		{ // constant
+			varre: `(?P<N>\d+)-\d+$`,
+			expr:  "float64{1.0}",
+			vars:  nil,
+			want:  []float64{1.0},
+		},
+		{ // quadratic
+			varre: `(?P<N>\d+)-\d+$`,
+			expr:  "float64{N*N, N, 1.0}",
+			vars:  map[string]float64{"N": 10.0},
+			want:  []float64{100.0, 10.0, 1.0},
+		},
+		{ // n log n
+			varre: `(?P<N>\d+)-\d+$`,
+			expr:  "float64{N*math.Log(N), 1.0}",
+			vars:  map[string]float64{"N": 10.0},
+			want:  []float64{math.Log(10.0) * 10.0, 1.0},
+		},
+	} {
+		re := regexp.MustCompile(tt.varre)
+		names := NamedVars(re)
+		expr, err := NewSlice(tt.expr, names)
 		if err != nil {
 			panic(err)
 		}
-		if y := yExpr.Eval(tt.vars); y != tt.wantY {
-			t.Errorf("%d: expected y = %f, got %f", i, tt.wantY, y)
+		for xi, ex := range expr {
+			if x := ex.Eval(tt.vars); x != tt.want[xi] {
+				t.Errorf("%d: expected %s[%d] = %f, got %f", i, ex, xi, tt.want[xi], x)
+			}
+		}
+	}
+}
+
+func TestNewErr(t *testing.T) {
+	for i, tt := range []struct {
+		expr    string
+		names   map[string]struct{}
+		wanterr error
+	}{
+		{
+			expr:    "(()", // invalid nesting
+			names:   map[string]struct{}{},
+			wanterr: errors.New("1:3: expected operand, found ')'"),
+		},
+		{
+			expr:    "N + 1.0", // unknown variable
+			names:   map[string]struct{}{},
+			wanterr: errors.New("unknown variable: N"),
+		},
+	} {
+		_, err := New(tt.expr, tt.names)
+		if err.Error() != tt.wanterr.Error() {
+			if err == nil {
+				t.Errorf("%d: expected err=%s, got nil", i, tt.wanterr)
+				continue
+			}
+			t.Errorf("%d: expected err=%s, got %s", i, tt.wanterr, err)
+		}
+	}
+}
+
+func TestNewSliceErr(t *testing.T) {
+	for i, tt := range []struct {
+		expr    string
+		names   map[string]struct{}
+		wanterr error
+	}{
+		{
+			expr:    "(()", // invalid nesting
+			names:   map[string]struct{}{},
+			wanterr: errors.New("1:3: expected operand, found ')'"),
+		},
+		{
+			expr:    "N + 1.0", // unknown variable
+			names:   map[string]struct{}{},
+			wanterr: errors.New("expression N + 1.0 is not a []float64"),
+		},
+	} {
+		_, err := NewSlice(tt.expr, tt.names)
+		if err.Error() != tt.wanterr.Error() {
+			if err == nil {
+				t.Errorf("%d: expected err=%s, got nil", i, tt.wanterr)
+				continue
+			}
+			t.Errorf("%d: expected err=%s, got %s", i, tt.wanterr, err)
 		}
 	}
 }
